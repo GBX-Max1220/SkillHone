@@ -118,8 +118,10 @@ ACTIVE_IDS = ("claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929")
 NOTICE = re.compile(r"(?im)^>\\s*\\*\\*Modification notice:\\*\\*\\s*\\S")
 
 
-def section(text, heading):
+def section(text, heading, required=True):
     match = re.search(r"(?m)^" + re.escape(heading) + r"\\s*$", text)
+    if not match and not required:
+        return ""
     assert match, f"missing section: {heading}"
     tail = text[match.end():]
     next_heading = re.search(r"(?m)^##\\s+", tail)
@@ -146,7 +148,7 @@ def main():
     text = MODELS.read_text(encoding="utf-8")
     retired = section(text, "## Retired Models (no longer available)")
     legacy = section(text, "## Legacy Models (still active)")
-    deprecated = section(text, "## Deprecated Models (retiring soon)")
+    deprecated = section(text, "## Deprecated Models (retiring soon)", required=False)
     lookup = section(text, "## Resolving User Requests")
     for model_id in RETIRED_IDS:
         assert row_for(retired, model_id), (
