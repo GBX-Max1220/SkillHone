@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Fetch the claude-api Skill at the commit before the Files API fix."""
+"""Fetch the claude-api Skill at the commit before the Files API fix.
+
+Also emits `repair.patch`, the verified upstream repair rebased onto the
+fixture root.
+"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +21,14 @@ SKILL_PATH = Path("skills/claude-api")
 SKILL_TREE = "6d12d690ffa6b91119e932e448f4437d9f197a53"
 SKILL_LICENSE_BLOB = "4f881c52d1f72f4cfb720e339e2d35c3058d01a9"
 FIX_COMMIT = "d230a6dd6eb1a0dbee9fec55e2f00a96e28dff81"
+FIX_SKILL_TREE = "284049f382b3c2b1989353637e0b3848dad0f09f"
+FIX_PATHS = (
+    "curl/managed-agents.md",
+    "shared/managed-agents-client-patterns.md",
+    "shared/managed-agents-environments.md",
+    "typescript/managed-agents/README.md",
+)
+REPAIR_PATCH = Path("repair.patch")
 
 
 def run(*args: str, cwd: Path | None = None, timeout: int = 120) -> None:
@@ -109,6 +121,43 @@ def materialize_skill(checkout: Path, destination: Path) -> None:
     )
 
 
+def capture_repair_patch(checkout: Path) -> bytes:
+    """Verify the upstream repair commit and return it as a fixture-root patch."""
+    run(
+        # Depth 2 keeps the parent commit object, so the repair can be proved a
+        # direct child of the pinned defect commit rather than a later descendant.
+        "git", "fetch", "-q", "--depth", "2", "--no-tags",
+        "origin", FIX_COMMIT, cwd=checkout,
+    )
+
+    if capture("git", "rev-parse", "FETCH_HEAD", cwd=checkout) != FIX_COMMIT:
+        raise RuntimeError("fetched commit did not match the pinned repair commit")
+    if capture("git", "rev-parse", f"{FIX_COMMIT}^", cwd=checkout) != COMMIT:
+        raise RuntimeError("repair commit is not a direct child of the pinned defect commit")
+    fix_tree = capture(
+        "git", "rev-parse", f"{FIX_COMMIT}:{SKILL_PATH.as_posix()}", cwd=checkout
+    )
+    if fix_tree != FIX_SKILL_TREE:
+        raise RuntimeError(f"unexpected upstream repair tree: {fix_tree}")
+
+    prefix = f"{SKILL_PATH.as_posix()}/"
+    changed = sorted(
+        capture("git", "diff", "--name-only", COMMIT, FIX_COMMIT, cwd=checkout).splitlines()
+    )
+    if changed != sorted(prefix + name for name in FIX_PATHS):
+        raise RuntimeError(f"repair commit scope is not the pinned Skill files: {changed}")
+
+    patch = subprocess.run(
+        # --relative drops the upstream skills/claude-api/ prefix so the patch
+        # applies from the fixture root with git apply's default -p1.
+        ["git", "diff", f"--relative={SKILL_PATH.as_posix()}", COMMIT, FIX_COMMIT],
+        cwd=checkout, check=True, capture_output=True, timeout=120,
+    ).stdout
+    if not patch.strip():
+        raise RuntimeError("verified repair commit produced an empty patch")
+    return patch
+
+
 def write_test(destination: Path) -> None:
     test_dir = destination / ".test"
     test_dir.mkdir()
@@ -144,6 +193,7 @@ if __name__ == "__main__":
 
 
 def write_provenance(destination: Path) -> None:
+    repaired_paths = "\n".join(f"- `{name}`" for name in FIX_PATHS)
     (destination / "PROVENANCE.md").write_text(
         f"""# Fixture provenance
 
@@ -154,13 +204,26 @@ def write_provenance(destination: Path) -> None:
 - Skill license blob: `{SKILL_LICENSE_BLOB}`
 - SkillHone repository license: copied to `LICENSE.skillhone`
 - Upstream repair commit: `{FIX_COMMIT}`
+- Repaired Skill Git tree: `{FIX_SKILL_TREE}`
 - Public upstream fix: https://github.com/anthropics/skills/commit/{FIX_COMMIT}
+- Generated repair patch: `{REPAIR_PATCH.as_posix()}`
 
 `prepare_fixture.py` fetches the commit by full SHA, verifies the Skill tree and
 license blob, and copies regular Git blobs only. It does not check out or run
-upstream code. The generated `.test` contract and provenance file are licensed
-under SkillHone's repository license; the upstream Skill's own `LICENSE.txt`
-is preserved unchanged.
+upstream code. The generated `.test` contract, provenance file and repair patch
+are SkillHone artifacts licensed under SkillHone's repository license; the
+upstream Skill's own `LICENSE.txt` is preserved unchanged.
+
+`{REPAIR_PATCH.as_posix()}` is the upstream repair commit diffed against the
+pinned defect commit and rebased onto the fixture root, so it applies with
+`git apply` from this directory. `prepare_fixture.py` verifies that the repair
+commit is a direct child of the defect commit, that its Skill tree matches the
+pinned tree above, and that it changes exactly these paths and nothing else:
+
+{repaired_paths}
+
+The patch is a verification aid for the contract test, not part of the defect
+being measured. Withhold it from a system under test.
 
 The test checks upload examples for the unsupported `purpose` parameter. It is
 a static documentation contract and does not call the API or assert server
@@ -183,7 +246,9 @@ def main() -> int:
         materialized = Path(tmp) / "verified-skill"
         materialize_skill(checkout, materialized)
         shutil.copytree(materialized, destination)
+        repair_patch = capture_repair_patch(checkout)
 
+    (destination / REPAIR_PATCH).write_bytes(repair_patch)
     write_test(destination)
     write_provenance(destination)
     run("git", "init", "-q", "-b", "main", cwd=destination)
@@ -191,8 +256,10 @@ def main() -> int:
     run("git", "config", "user.email", "skillhone@example.invalid", cwd=destination)
     run("git", "add", ".", cwd=destination)
     run("git", "commit", "-q", "-m", "fixture: reproduce stale Files API upload examples", cwd=destination)
+    run("git", "apply", "--check", REPAIR_PATCH.as_posix(), cwd=destination)
     print(f"Created fixture: {destination}")
     print("Expected baseline: python3 .test/test_files_upload_contract.py -> failure")
+    print(f"Expected repair: git apply {REPAIR_PATCH.as_posix()} -> test passes")
     return 0
 
 
