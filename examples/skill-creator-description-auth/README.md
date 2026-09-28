@@ -72,7 +72,9 @@ Three clauses, in order. Clause C only runs when A and B hold.
 - **C. Behavioural.** With a stub `claude` executable on `PATH` (recording argv
   and stdin, replying `<new_description>…</new_description>`), the optimizer's own
   CLI is run end to end. The test asserts the prompt is delivered **over stdin**
-  (not argv) and that the `<new_description>` tag is parsed back out of the reply.
+  (not argv), that the stub received the `-p` flag, and that the
+  `<new_description>` tag is parsed back out of the reply. It asserts what the
+  stub `claude` was handed; it does not verify the behaviour of the real CLI.
 
 ## Repair scope
 

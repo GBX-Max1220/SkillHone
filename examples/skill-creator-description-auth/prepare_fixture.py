@@ -166,10 +166,11 @@ Clause A (structural, ast only)
     the Anthropic SDK for that path. Upstream modules are never imported here,
     so a missing `anthropic` package can never be mistaken for this defect.
 
-Clause B (behavioural, only when clause A holds)
+Clause C (behavioural, only when clauses A and B hold)
     The optimizer is exercised end to end through its own CLI with a stub
-    `claude` executable on PATH: the prompt must be delivered over stdin and
-    the <new_description> tag must be parsed back out.
+    `claude` executable on PATH: the prompt must be delivered over stdin, the
+    invocation must carry the non-interactive `-p` flag, and the
+    <new_description> tag must be parsed back out.
 
 The test deliberately does NOT treat these as failures: the absence of the
 `anthropic` package, import errors, or a changed function signature.
@@ -355,6 +356,12 @@ def behavioural():
             findings.append("the prompt was passed on argv instead of stdin")
         if not argv_text.strip():
             findings.append("the stub `claude` was never invoked")
+        argv_args = [line.strip() for line in argv_text.splitlines() if line.strip()]
+        if argv_args and "-p" not in argv_args:
+            findings.append(
+                "the optimizer invoked `claude` without the -p flag, which selects "
+                f"non-interactive one-shot mode; argv was {argv_args!r}"
+            )
         return findings
 
 
