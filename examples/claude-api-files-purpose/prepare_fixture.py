@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -232,6 +233,25 @@ error wording.
     )
 
 
+def build_fixture(staging: Path, workspace: Path) -> None:
+    """Build and fully verify the fixture inside staging, publishing nothing."""
+    checkout = workspace / "source"
+    materialized = workspace / "verified-skill"
+    materialize_skill(checkout, materialized)
+    repair_patch = capture_repair_patch(checkout)
+
+    shutil.copytree(materialized, staging, dirs_exist_ok=True)
+    (staging / REPAIR_PATCH).write_bytes(repair_patch)
+    write_test(staging)
+    write_provenance(staging)
+    run("git", "init", "-q", "-b", "main", cwd=staging)
+    run("git", "config", "user.name", "SkillHone", cwd=staging)
+    run("git", "config", "user.email", "skillhone@example.invalid", cwd=staging)
+    run("git", "add", ".", cwd=staging)
+    run("git", "commit", "-q", "-m", "fixture: reproduce stale Files API upload examples", cwd=staging)
+    run("git", "apply", "--check", REPAIR_PATCH.as_posix(), cwd=staging)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("destination", type=Path)
@@ -240,23 +260,29 @@ def main() -> int:
     if destination.exists():
         print(f"ERROR: destination already exists: {destination}", file=sys.stderr)
         return 2
+    if not destination.parent.is_dir():
+        print(f"ERROR: destination parent is not a directory: {destination.parent}", file=sys.stderr)
+        return 2
 
-    with tempfile.TemporaryDirectory(prefix="skillhone-claude-api-files-") as tmp:
-        checkout = Path(tmp) / "source"
-        materialized = Path(tmp) / "verified-skill"
-        materialize_skill(checkout, materialized)
-        shutil.copytree(materialized, destination)
-        repair_patch = capture_repair_patch(checkout)
+    # Staging sits beside the destination so publishing is a same-filesystem
+    # rename. A failed fetch, verification or patch check then leaves no
+    # destination behind. The finally block also removes the staging tree on
+    # any error or interrupt it survives; SIGKILL or a crash can strand it.
+    workspace = Path(tempfile.mkdtemp(prefix="skillhone-claude-api-files-"))
+    staging = Path(tempfile.mkdtemp(prefix=".fixture-partial-", dir=destination.parent))
+    published = False
+    try:
+        build_fixture(staging, workspace)
+        if destination.exists():
+            print(f"ERROR: destination appeared while building: {destination}", file=sys.stderr)
+            return 2
+        os.replace(staging, destination)
+        published = True
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+        if not published:
+            shutil.rmtree(staging, ignore_errors=True)
 
-    (destination / REPAIR_PATCH).write_bytes(repair_patch)
-    write_test(destination)
-    write_provenance(destination)
-    run("git", "init", "-q", "-b", "main", cwd=destination)
-    run("git", "config", "user.name", "SkillHone", cwd=destination)
-    run("git", "config", "user.email", "skillhone@example.invalid", cwd=destination)
-    run("git", "add", ".", cwd=destination)
-    run("git", "commit", "-q", "-m", "fixture: reproduce stale Files API upload examples", cwd=destination)
-    run("git", "apply", "--check", REPAIR_PATCH.as_posix(), cwd=destination)
     print(f"Created fixture: {destination}")
     print("Expected baseline: python3 .test/test_files_upload_contract.py -> failure")
     print(f"Expected repair: git apply {REPAIR_PATCH.as_posix()} -> test passes")
