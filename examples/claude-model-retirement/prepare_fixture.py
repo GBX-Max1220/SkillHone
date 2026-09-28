@@ -131,11 +131,23 @@ def row_for(table, model_id):
     return next((line for line in rows if model_id in line), None)
 
 
+def lookup_value(table, request):
+    matches = [
+        cells[2].strip()
+        for line in table.splitlines() if line.lstrip().startswith("|")
+        for cells in [line.split("|")]
+        if len(cells) >= 4 and cells[1].strip() == request
+    ]
+    assert len(matches) == 1, f"expected one lookup row for {request}: {matches}"
+    return matches[0]
+
+
 def main():
     text = MODELS.read_text(encoding="utf-8")
     retired = section(text, "## Retired Models (no longer available)")
     legacy = section(text, "## Legacy Models (still active)")
     deprecated = section(text, "## Deprecated Models (retiring soon)")
+    lookup = section(text, "## Resolving User Requests")
     for model_id in RETIRED_IDS:
         assert row_for(retired, model_id), (
             f"{model_id} was reported unavailable but is not in Retired Models"
@@ -146,6 +158,24 @@ def main():
         row = row_for(legacy, model_id)
         assert row and "Active" in row and "Deprecated" not in row, (
             f"previously valid active model changed status: {model_id}"
+        )
+    retired_requests = {
+        '"opus 4.1"': "claude-opus-4-1",
+        '"opus 4", "opus 4.0"': "claude-opus-4-0",
+        '"sonnet 4", "sonnet 4.0"': "claude-sonnet-4-0",
+        '"haiku 3"': "claude-3-haiku-20240307",
+    }
+    for request, unavailable_id in retired_requests.items():
+        value = lookup_value(lookup, request)
+        assert value.startswith("Retired") and unavailable_id not in value, (
+            f"retired model is still recommended for {request}: {value}"
+        )
+    for request, active_id in (
+        ('"opus 4.5"', "claude-opus-4-5"),
+        ('"sonnet 4.5"', "claude-sonnet-4-5"),
+    ):
+        assert lookup_value(lookup, request) == f"`{active_id}`", (
+            f"previously valid active lookup changed: {request}"
         )
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     if digest != ORIGINAL_MODELS_SHA256:
@@ -177,8 +207,9 @@ def write_provenance(destination: Path) -> None:
 The issue author reported that the Opus 4.1 retirement date had passed and
 that four model IDs returned 404, while Opus 4.5 and Sonnet 4.5 remained
 available. The fixture contract encodes those historical observations without
-making network or credentialed API calls. It checks only the four reported
-retirements and two reported-active IDs; it is not a live catalog validator.
+making network or credentialed API calls. It checks the four reported model
+statuses and request-lookup rows while preserving two active models and their
+lookup rows; it is not a live catalog validator.
 
 `prepare_fixture.py` verifies the pinned commit and key upstream blob IDs,
 materializes only regular Git blobs, and never executes upstream code. The
