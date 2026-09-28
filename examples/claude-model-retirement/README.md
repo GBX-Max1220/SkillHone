@@ -10,6 +10,8 @@ reported on 2026-08-17 that four unavailable model families were still
 presented in the Skill's `Legacy` or `Deprecated` sections. One retirement date
 had passed, while other rows still said `TBD` or `retiring soon`. The report
 also confirmed that the listed Opus 4.5 and Sonnet 4.5 IDs remained active.
+The `Resolving User Requests` table still directed readers to unavailable
+model aliases or described a retired model as deprecated.
 This is a status-expiration defect: time changes the truth of a row without
 changing the file.
 
@@ -17,8 +19,9 @@ The fixture pins commit
 `f6656c1256d5a8adfa37db9110046ef20bac644c` (2026-08-13), verifies the commit
 and key Git blob IDs, and materializes the real Skill tree. The baseline test
 must fail for the four reported retired IDs. A scoped repair moves those IDs to
-`Retired`, keeps Opus 4.5 and Sonnet 4.5 marked `Active`, and adds a visible
-modification notice to the changed Apache-2.0 file.
+`Retired`, updates the corresponding request-lookup rows to stop recommending
+unavailable aliases, keeps Opus 4.5 and Sonnet 4.5 active in both tables, and
+adds a visible modification notice to the changed Apache-2.0 file.
 
 ## Reproduce the baseline
 
@@ -38,12 +41,14 @@ After preparing the fixture, ask a Coding Agent:
 > Use the `claude-api` Skill in `$env:TEMP\claude-model-retirement` to report
 > the status, as of 2026-08-17, of the four model IDs named in the fixture's
 > `PROVENANCE.md`. Use only the local Skill files. Run the linked `.test`
-> contract, make the smallest scoped repair, and preserve the active model rows.
+> contract, make the smallest scoped repair to both status and request-lookup
+> rows, and preserve the active model rows.
 
-The regression contract checks the four expired IDs and the two reported-active
-IDs. It does not verify current API availability, future retirement dates, or
-the accuracy of every other model row. Those remain time-sensitive upstream
-facts that need a live-source review.
+The regression contract checks the four expired IDs and their request-lookup
+rows, plus the two reported-active IDs and their lookup rows. It does not
+verify current API availability, future retirement dates, or the accuracy of
+every other model row. Those remain time-sensitive upstream facts that need a
+live-source review.
 
 ## Attribution and limitations
 
